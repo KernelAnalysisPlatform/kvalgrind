@@ -1,0 +1,198 @@
+=== Various notes on different decisions made ===
+
+== 5/14/12 Using with LLVM - rwhelan ==
+-When building LLVM, run 'REQUIRES_RTTI=1 make' to allow QEMU and LLVM libraries
+to link together properly.
+
+== 5/15/12 Global env in register - rwhelan ==
+-In order to accomodate compilation with Clang, the S2E guys disabled the
+register placement of the CPUState (as seen in dyngen-exec.h).  We decided to go
+along with this, even though we aren't compiling with Clang.  Now, it is
+declared in op_helper.c, with #ifdefs for CONFIG_LLVM dealing appropriately with
+the CPUState.
+
+== 5/16/12 LLVM with other architectures - rwhelan ==
+-In order to enable LLVM on the back end of new architectures, changes need to
+be made to target-*/helper.c, target-*/op_helper.c, and target-*/translate.c.
+To see what these changes are, grep for CONFIG_LLVM in these files for i386 or
+ARM.
+
+=== QEMU architecture/record+replay notes ===
+
+vl.c:
+- ioport stuff moved to ioport.c - see that file and associated routines
+- timer stuff moved to qemu-timer.c - see that file and associated routines
+- main_loop_wait()
+- main_loop()
+
+cpus.c
+- look at calls to cpu_signal(sig) - signals the currently running cpu
+- SIG_IPI setup in qemu_tcg_init_cpu_signals() to point to cpu_signal
+- iothread_requesting_mutex??
+- qemu_tcg_init_vcpu()
+    -> qemu_tcg_cpu_thread_fn()
+        -> tcg_exec_all() - new main loop?
+            -> tcg_cpu_exec() 
+                -> setup icount stuff
+                -> cpu_exec()
+                -> do icount stuff
+        -> qemu_tcg_wait_io_event()
+
+- io_thread is the coordinating thread (see qemu_init_cpu_loop())
+    -> called from vl.c
+
+main-loop.c
+- qemu_signal_init()
+    -> SIG_IPI - for cpus
+    -> SIGIO
+    -> SIGALRM
+    -> SIGBUS
+
+exec.c
+- memory_map_init() - looks like memory subsystem changed
+- cpu_register_io_memory_fixed()?
+
+
+ioport.c
+- ioport_register(IORange)
+    - register_ioport_read() with ioport_read_thunk()
+    - register_ioport_write() with ioport_write_thunk()
+    - seems like a shortcut for a port range (base, len) and sizes (1,2,4)
+- register_ioport_read()
+    - modifies ioport_read_table
+- register_ioport_write()
+    - modifies ioport_write_table
+- portio_list_add()
+- ioport_read_table and ioport_write_table are now here
+- ioport_{read,write}{b,w,l}_thunk()??
+
+memory.[ch]
+
+
+cpu_register_physical_memory_log(start_addr, size, phys_offset, region_offset,
+log_dirty) - TODO: need to fix rr_log
+    - seems to be where all CPU physical memory is registered
+cpu_register_io_memory(readfunc, writefund, opaque, endianness)
+    - returns table address?
+cpu_unregister_io_memory(table_address)
+cpu_physical_memory_rw()
+    - TODO also see cpu_physical_memory_map()
+    - this seems to be used by devices to get a read or write (but not both)
+      buffer into RAM.
+    - it's used by dma-helper.c in dam_bdrv_cb() routine.  not quite sure what
+      to do with it yet.
+
+Interesting:  queued_work_first, queued_work_last in CPU env.
+cpus.c:
+- run_on_cpu(env, func, data)
+
+
+Conditions:
+- tcg_halt_cond (also env->halt_cond)
+    - all envs have this as env->halt_cond
+    - broadcast: qemu_kick_cpu() 
+- qemu_cpu_cond
+    - signal: qemu_tcg_cpu_thread_fn() when cpus are created
+    - wait: qemu_tcg_init_vcpu() env->created == 0
+- qemu_pause_cond
+    - signal: qemu_wait_io_event_common() if env->stop == 1
+    - signal: cpu_stop_current() if cpu_single_env
+    - wait: pause_all_vcpus() while !all_vcpus_paused()
+- qemu_work_cond
+    - wait:  run_on_cpu() while work not done
+    - broadcast:  flush_queued_work() when work completed
+- qemu_io_proceeded_cond
+    - wait:  qemu_tcg_wait_io_event() while iothread_requesting_mutex
+    - broadcast:  qemu_mutex_lock_iothread() after qemu_mutex_lock() succeeded
+
+Mutex:
+- qemu_global_mutex
+    - qemu_tcg_cpu_thread_fn() takes the lock before cpu creation (it's
+      released temporarily whenever a wait is used)
+    - qemu_mutex_lock_iothread()
+        - iothread_requesting_mutex = true
+        - trylock() first, if that fails:
+            - qemu_cpu_kick_thread(first_cpu), then qemu_mutex_lock()
+        - iotrhead_requesting_mutex = false
+        - broadcast qemu_io_proceeded_cond
+    - qemu_init_main_loop() - via qemu_mutex_lock_iothread()
+    - os_host_main_loop_wait() - via qemu_mutex_lock_iothread() only in
+      windows
+    - main_loop_wait() if timeout > 0: mutex is unlocked, then select, then
+      locked
+
+
+Threads:
+- io_thread
+- tcg_cpu_thread
+    - all CPUs run on this thread
+- qemu_cpu_kick_thread()
+    - sends SIG_IPI (SIGUSR1) to env->thread->thread (tcg_cpu_thread)
+    - handled by cpu_signal()
+        - if (cpu_single_env) { cpu_exit(); }
+            - cpu_unlink_tb()
+            - env->exit_request = 1
+            - cpu_loop_exit()
+        - exit_request = 1
+    - causes exit from tcg_exec_all()
+    - calls qemu_tcg_wait_io_event()
+
+It looks like qemu_global_mutex synchronizes the two threads, so that CPU is
+never executing code when IO thread is executing devices.  Yay!
+- CPU must only be able to execute while main_loop_wait() is in the select()
+  call; otherwise, it reacquires the mutex.
+- This only occurs if timeout > 0, that is nonblocking = false
+
+
+===============================================================================
+Ryan Whelan
+5/2/12
+Memory model notes
+
+-In addition to the notes provided in docs/memory.txt, there is more info
+available here: http://wiki.qemu.org/Features/Memory_API
+
+-In vl.c inside of main(), eventually cpu_exec_init_all() is called.  This
+function calls memory_map_init() and io_mem_init() to initialize the system
+memory and the I/O memory.
+
+-Later on in main(), machine->init() is called.  We can see that the init()
+function pointer is actually pc_init_pci() from looking in hw/pc_piix.c at the
+1.0 machine settings.  This function just calls pc_init1().
+
+-The other functions that allocate system and PCI RAM are pc_memory_init() and
+i440fx_init(), respectively.
+
+-Inside of pc_memory_init(), the MemoryRegion 'ram' is allocated using
+g_malloc().  This function is used quite often during RAM allocation, and I'm
+not quite sure how it works.  But then memory_region_init_ram() is called, which
+actually sets the ram_addr field by calling qemu_ram_alloc().  I'm guessing this
+is the reason why the old API is still compatible with the new API, but I'm
+still not quite sure how the pieces fit together, especially in terms of the
+different alloc() functions.
+
+-Here is a comment from inside pc_memory_init():
+/* Allocate RAM.  We allocate it as a single memory region and use
+ * aliases to address portions of it, mostly for backwards compatiblity
+ * with older qemus that used qemu_ram_alloc().
+ */
+
+-Running 'info mtree' inside of the monitor allows you to see the memory map.
+
+-As far as devices go, it seems like most (if not all) have converted to the new
+memory API.  An example is in hw/e1000.c in e1000_mmio_setup(), where the new
+memory API is being used.
+
+-Overall, it's still somewhat unclear how the two memory APIs are compatible,
+but the call to qemu_ram_alloc() during allocation could be responsible for
+that.  There are also many other uses of ram_addr stuff in memory.c.  It's also
+unclear what this means in regard to record/replay, but I will try to start
+decode this by looking at the patch.
+
+-The more I look, the more I think about it, the more I think the new memory API
+is just an abstraction over the old one.  At least for now.  Consider that
+exec.c still uses the old memory API.  Actually, this comment on the webpage
+seems to confirm that, I guess it is just in limbo now: "Currently the memory
+API is implemented on top of the old ram_addr_t API; the two APIs coexist. This
+severely limits the utility of the new API. Patches are queued in..."
+
