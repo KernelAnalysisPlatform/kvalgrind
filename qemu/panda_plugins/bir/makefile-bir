@@ -1,0 +1,24 @@
+CXXFLAGS=-O0 -g -lm -std=c++11
+
+bi: bir_utils.cpp binary_indexer.cpp                                                         
+	g++ -o $@ $^ $(CXXFLAGS)
+
+sp: bir_utils.cpp spit_psg.cpp
+	g++ -o $@ $^ $(CXXFLAGS)
+    
+si: bir_utils.cpp inv_spit.cpp 
+	g++ -o $@ $^ $(CXXFLAGS)
+
+bm: bir_utils.cpp binary_merger.cpp                                                         
+	g++ -o $@ $^ $(CXXFLAGS)
+
+br: bir_utils.cpp binary_retriever.cpp                                                         
+	g++ -o $@ $^ $(CXXFLAGS)
+
+bp: bir_utils.cpp binary_preprocessor.cpp                                                         
+	g++ -o $@ $^ $(CXXFLAGS)
+
+tr: traligner.cpp bir_utils.cpp
+	g++ -o $@ $^ $(CXXFLAGS)
+
+all: bi bp sp
