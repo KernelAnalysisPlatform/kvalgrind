@@ -559,3 +559,8 @@ void ga_command_state_init(GAState *s, GACommandState *cs)
 #endif
     ga_command_state_add(cs, guest_file_init, NULL);
 }
+
+int64_t qmp_get_ksymbol(const char *path, Error **err)
+{
+  
+}

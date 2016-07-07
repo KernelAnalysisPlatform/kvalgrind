@@ -215,3 +215,15 @@
 ##
 { 'command': 'guest-fsfreeze-thaw',
   'returns': 'int' }
+
+##
+# @get-ksymbol:
+#
+# Get kernel symbol of guest OS. 
+#
+# Returns: address of specified kernel symbol.
+#
+##
+{ 'command': 'get-ksymbol',
+  'data':    { 'symbol': 'str', },
+  'returns': 'int' }
