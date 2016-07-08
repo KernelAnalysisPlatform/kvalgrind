@@ -564,6 +564,7 @@ void ga_command_state_init(GAState *s, GACommandState *cs)
     ga_command_state_add(cs, guest_file_init, NULL);
 }
 
+
 static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t size)
 {
   int i;
@@ -573,13 +574,14 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
       if (lexer->state == IN_ADDR) {
         char num[64] = {0};
         strncpy(num, buf + lexer->last, (i - lexer->last));
-        sscanf(num, "%x", &lexer->addr);
+        //fprintf(stderr,"%s\n",num);
+        sscanf(num, "%016llx", &lexer->addr);
       }
       if (lexer->state == IN_SYM) {
         char symbol[256] = {0};
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
         qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(lexer->addr)));
-        fprintf(stderr,"%s:\t0x%016x\n",symbol, lexer->addr);
+        //fprintf(stderr,"%s:\t0x%016llx\n",symbol, lexer->addr);
       }
       lexer->state = (lexer->state + 1) % 4;
       lexer->last = i + 1;
@@ -611,7 +613,7 @@ static int64_t load_kernel_symbols(Error **err)
   buf = (char *)malloc(size);
   idx = buf;
   fseek(fh, 0L, SEEK_SET);
-  while ((idx = getc(fh)) != EOF) { idx++; }
+  while ((*idx = getc(fh)) != EOF) { idx++; }
 
   sym_lexer.state = IN_ADDR;
   sym_lexer.last = 0;
