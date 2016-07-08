@@ -567,19 +567,25 @@ void ga_command_state_init(GAState *s, GACommandState *cs)
 static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t size)
 {
   int i;
+  fprintf(stderr,"symbol parse\n");
   for (i = 0; i < size; i++) {
-    if (buf[i] == ' ' || buf[i] == '\n') {
+    if (lexer->state != IN_PROP && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t')) {
       if (lexer->state == IN_ADDR) {
-        char num[32] = {0};
+        char num[64] = {0};
         strncpy(num, buf + lexer->last, (i - lexer->last));
         sscanf(num, "%x", &lexer->addr);
       }
       if (lexer->state == IN_SYM) {
-        char symbol[128] = {0};
+        char symbol[256] = {0};
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
         qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(lexer->addr)));
+        fprintf(stderr,"%s:\t0x%016x\n",symbol, lexer->addr);
       }
-      lexer->state = (lexer->state + 1) % 3;
+      lexer->state = (lexer->state + 1) % 4;
+      lexer->last = i + 1;
+    }
+    if (lexer->state == IN_PROP && buf[i] == '\n') {
+      lexer->state = IN_ADDR;
       lexer->last = i + 1;
     }
   }
