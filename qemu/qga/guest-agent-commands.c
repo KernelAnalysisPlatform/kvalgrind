@@ -21,14 +21,18 @@
 #endif
 #endif
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include "qga/guest-agent-core.h"
 #include "qga-qmp-commands.h"
 #include "qerror.h"
 #include "qemu-queue.h"
+#include "qemu-objects.h"
+#include "guest-agent-symbols.h"
 
 static GAState *ga_state;
+static QDict *ksymbols;
 
 /* Note: in some situations, like with the fsfreeze, logging may be
  * temporarilly disabled. if it is necessary that a command be able
@@ -560,7 +564,62 @@ void ga_command_state_init(GAState *s, GACommandState *cs)
     ga_command_state_add(cs, guest_file_init, NULL);
 }
 
-int64_t qmp_get_ksymbol(const char *path, Error **err)
+static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t size)
 {
-  
+  int i;
+  for (i = 0; i < size; i++) {
+    if (buf[i] == ' ' || buf[i] == '\n') {
+      if (lexer->state == IN_ADDR) {
+        char num[32] = {0};
+        strncpy(num, buf + lexer->last, (i - lexer->last));
+        sscanf(num, "%x", &lexer->addr);
+      }
+      if (lexer->state == IN_SYM) {
+        char symbol[128] = {0};
+        strncpy(symbol, buf + lexer->last, (i - lexer->last));
+        qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(lexer->addr)));
+      }
+      lexer->state = (lexer->state + 1) % 3;
+      lexer->last = i + 1;
+    }
+  }
+}
+
+static int64_t load_kernel_symbols(Error **err)
+{
+  FILE *fh;
+  int fd;
+  int64_t size = 0;
+  char *buf, *idx, c;
+  SymLexer sym_lexer;
+  ksymbols = qdict_new();
+
+  slog("loading kernel symbols...");
+  fh = fopen("/proc/kallsyms", "r");
+  if (!fh) {
+    error_set(err, QERR_OPEN_FILE_FAILED, "/proc/kallsyms");
+    return -1;
+  }
+  fd = fileno(fh);
+  while ((c = getc(fh)) != EOF) { size++; }
+  buf = (char *)malloc(size);
+  idx = buf;
+  fseek(fh, 0L, SEEK_SET);
+  while ((idx = getc(fh)) != EOF) { idx++; }
+
+  sym_lexer.state = IN_ADDR;
+  sym_lexer.last = 0;
+  kernel_symbol_parse(ksymbols, &sym_lexer, buf, size);
+  fclose(fh);
+  free(buf);
+  return 0;
+}
+
+int64_t qmp_get_ksymbol(const char *symbol, Error **err)
+{
+  if (!ksymbols) {
+    /* Firstly kernel symbols must be loaded. */
+    load_kernel_symbols(err);
+  }
+  return qdict_get_try_int(ksymbols, symbol, -1);
 }
