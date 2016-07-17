@@ -6,7 +6,7 @@
  * Author:
  *  Ren Kimura               rkx1209dev@gmail.com
  *
- * This work is licensed under the terms of the GNU GPL, version 2.
+ * This work is licensed under the terms of the GNU GPL, version 3.
  * See the COPYING file in the top-level directory.
  *
  */
@@ -41,6 +41,8 @@ bool init_plugin(void *);
 void uninit_plugin(void *);
 int connect_guest_agent();
 int64_t get_ksymbol_addr(const char *ksymbol);
+struct module *get_kmod(const char *mod_name);
+bool sym_in_kmod(struct module *kmod, const char *symbol);
 
 }
 
@@ -66,43 +68,134 @@ int connect_guest_agent()
 
   if(connect(agent_sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr)) == -1){
     perror("in_vmi_linux: connection to agent failuer\nPlease launch agent in your guest os firstly");
-    exit(EXIT_FAILURE);
+    close(agent_sock);
+    return EAGAIN;
   }
   return agent_sock;
 }
 
-int64_t get_ksymbol_addr(const char *ksymbol)
+void send_qmp(int sock, char *request, char *response, int resp_size)
 {
-  char *ksym_qmp;
-  char recv_qmp[QMP_RECV_SIZE];
   int write_num,read_num;
-  int64_t addr;
-
-  if (agent_sock == -1) {
-    fprintf(stderr, "get_ksymbol_addr: connection to guest agent not exist.\n");
-    exit(EXIT_FAILURE);
+  if (sock == -1) {
+    perror("send_qmp: connection to guest agent not exist.");
   }
-
-  ksym_qmp = (char *)malloc(strlen(qmp_template) + strlen(ksymbol) - 2 + 1);
-  sprintf(ksym_qmp, qmp_template, ksymbol);
-
-  if ((write_num = write(agent_sock, ksym_qmp, strlen(ksym_qmp))) != -1){
-    fprintf(stderr,"sended qmp:\t%s\n",ksym_qmp);
+  if ((write_num = write(sock, request, strlen(request))) != -1){
+    fprintf(stderr,"sended qmp:\t%s\n",request);
     errno = 0;
-    if ((read_num = read(agent_sock, recv_qmp, QMP_RECV_SIZE)) != -1){
-      fprintf(stderr,"received qmp:\t%s\n",recv_qmp);
+    if ((read_num = read(sock, response, resp_size)) != -1){
+      fprintf(stderr,"received qmp:\t%s\n",response);
     } else{
       perror("read failure");
     }
   } else{
     perror("write failure");
   }
-  sscanf(recv_qmp, qmp_recv_temp, &addr);
+
+}
+
+/* TODO: Following functions are bit ugly and too duplicated. */
+int64_t get_ksymbol_addr(const char *ksymbol)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t addr;
+
+  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(get-ksymbol)) + strlen(ksymbol) - 2 + 1);
+  sprintf(ksym_qmp, QMP_TEMPLATE(get-ksymbol), ksymbol);
+
+  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+
+  sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
 
   free(ksym_qmp);
 
   return addr;
 }
+
+int64_t get_kmod_addr(const char *mod_name)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t addr;
+
+  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(kmod-addr)) + strlen(mod_name) - 2 + 1);
+  sprintf(ksym_qmp, QMP_TEMPLATE(kmod-addr), mod_name);
+
+  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+
+  sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
+
+  free(ksym_qmp);
+
+  return addr;
+}
+
+
+int64_t get_kmod_size(const char *mod_name)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t size;
+
+  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(kmod-size)) + strlen(mod_name) - 2 + 1);
+  sprintf(ksym_qmp, QMP_TEMPLATE(kmod-size), mod_name);
+
+  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+
+  sscanf(recv_qmp, QMP_RECV_TEMP, &size);
+
+  free(ksym_qmp);
+
+  return size;
+}
+
+int64_t get_word_size()
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t size;
+
+  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(word-size)) - 2 + 1);
+  sprintf(ksym_qmp, QMP_TEMPLATE(word-size));
+
+  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+
+  sscanf(recv_qmp, QMP_RECV_TEMP, &size);
+
+  free(ksym_qmp);
+
+  return size;
+}
+// struct module *get_kmod(const char *mod_name)
+// {
+//   struct module *mod_head, *mod_entry;
+//   struct list_head *p;
+//   mod_head = (struct module *)get_ksymbol_addr("modules");
+//   list_for_each(p, &mod_head->list) {
+//     mod_entry = list_entry(p, struct module, list);
+//     if (strcmp(mod_entry->name, mod_name) == 0) {
+//       return mod_entry;
+//     }
+//   }
+//   return NULL;
+// }
+//
+// /* Does the symbol belong to specified kernel module? */
+// bool sym_in_kmod(struct module *kmod, const char *symbol)
+// {
+//   /* Parse Elf_Sym in kernel module strcture. */
+//   Elf_Sym *sym_entry;
+//   int s;
+//   for (s = 0; s < kmod->num_symtab; s++) {
+//     sym_entry = &kmod->symtab[s];
+//     char *ksym = kmod->strtab + sym_entry->st_name;
+//     if (memcmp(symbol, ksym, sym_entry->st_size) == 0) {
+//       return true;
+//     }
+//   }
+//   return false;
+// }
 
 bool init_plugin(void *self)
 {

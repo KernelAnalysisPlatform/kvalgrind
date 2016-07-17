@@ -6,7 +6,13 @@
 
 #define QMP_RECV_SIZE 256
 
-const char *qmp_template = "{ \"execute\": \"get-ksymbol\", \"arguments\": { \"symbol\": \"%s\" } }";
-const char *qmp_recv_temp = "{\"return\": {%lld}}";
+#define QMP_TEMPLATE(comm) "{ \"execute\": \"comm\" }"
+#define QMP_TEMPLATE1(comm) "{ \"execute\": \"comm\", \"arguments\": { \"symbol\": \"%s\" } }"
+#define QMP_RECV_TEMP "{\"return\": {%lld}}"
 
+int connect_guest_agent();
+int64_t get_ksymbol_addr(const char *ksymbol);
+int64_t get_kmod_addr(const char *mod_name);
+int64_t get_kmod_size(const char *mod_name);
+int64_t get_word_size();
 #endif
