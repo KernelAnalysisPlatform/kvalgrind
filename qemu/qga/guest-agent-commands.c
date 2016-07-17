@@ -32,7 +32,7 @@
 #include "guest-agent-symbols.h"
 
 static GAState *ga_state;
-static QDict *ksymbols;
+static QDict *ksymbols, *kmodinfos;
 
 /* Note: in some situations, like with the fsfreeze, logging may be
  * temporarilly disabled. if it is necessary that a command be able
@@ -564,30 +564,78 @@ void ga_command_state_init(GAState *s, GACommandState *cs)
     ga_command_state_add(cs, guest_file_init, NULL);
 }
 
+static char *read_from_file(const char *path, int64_t *size)
+{
+  FILE *fh;
+  char *buf, *idx, c;
+  fh = fopen(path, "r");
+  if (!fh) {
+    //error_set(err, QERR_OPEN_FILE_FAILED, path);
+    return NULL;
+  }
+  while ((c = getc(fh)) != EOF) { (*size)++; }
+  buf = (char *)malloc(*size);
+  idx = buf;
+  fseek(fh, 0L, SEEK_SET);
+  while ((*idx = getc(fh)) != EOF) { idx++; }
+
+  fclose(fh);
+  return buf;
+}
 
 static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t size)
 {
+  char symbol[256] = {0};
+  char num[64] = {0};
+  int64_t addr;
   int i;
   fprintf(stderr,"symbol parse\n");
   for (i = 0; i < size; i++) {
     if (lexer->state != IN_PROP && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t')) {
       if (lexer->state == IN_ADDR) {
-        char num[64] = {0};
         strncpy(num, buf + lexer->last, (i - lexer->last));
         //fprintf(stderr,"%s\n",num);
-        sscanf(num, "%016llx", &lexer->addr);
+        sscanf(num, "%016llx", &addr);
       }
       if (lexer->state == IN_SYM) {
-        char symbol[256] = {0};
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
-        qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(lexer->addr)));
+        qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(addr)));
         //fprintf(stderr,"%s:\t0x%016llx\n",symbol, lexer->addr);
       }
       lexer->state = (lexer->state + 1) % 4;
-      lexer->last = i + 1;
     }
     if (lexer->state == IN_PROP && buf[i] == '\n') {
       lexer->state = IN_ADDR;
+    }
+    lexer->last = i + 1;
+  }
+}
+
+static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t size)
+{
+  char symbol[256] = {0};
+  char num[64] = {0};
+  int64_t maddr, msize;
+  int i;
+
+  fprintf(stderr,"kernel info parsing...\n");
+  for (i = 0; i < size; i++) {
+    if (buf[i] == ' ' || buf[i] == '\n') {
+      if (lexer->state == IN_NAME) {
+        strncpy(symbol, buf + lexer->last, (i - lexer->last));
+      }
+      if (lexer->state == IN_SIZE) {
+        strncpy(num, buf + lexer->last, (i - lexer->last));
+        //fprintf(stderr,"%s\n",num);
+        sscanf(num, "%016llx", &msize);
+      }
+      if (lexer->state == IN_KADDR) {
+        strncpy(num, buf + lexer->last, (i - lexer->last));
+        //fprintf(stderr,"%s\n",num);
+        sscanf(num, "%016llx", &maddr);
+        qdict_put_obj(info, symbol, QOBJECT(qkmod(maddr, msize)));
+      }
+      lexer->state = (lexer->state + 1) % 6;
       lexer->last = i + 1;
     }
   }
@@ -595,30 +643,34 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
 
 static int64_t load_kernel_symbols(Error **err)
 {
-  FILE *fh;
-  int fd;
+  char *buf;
   int64_t size = 0;
-  char *buf, *idx, c;
   SymLexer sym_lexer;
   ksymbols = qdict_new();
 
   slog("loading kernel symbols...");
-  fh = fopen("/proc/kallsyms", "r");
-  if (!fh) {
-    error_set(err, QERR_OPEN_FILE_FAILED, "/proc/kallsyms");
-    return -1;
-  }
-  fd = fileno(fh);
-  while ((c = getc(fh)) != EOF) { size++; }
-  buf = (char *)malloc(size);
-  idx = buf;
-  fseek(fh, 0L, SEEK_SET);
-  while ((*idx = getc(fh)) != EOF) { idx++; }
-
+  buf = read_from_file("/proc/kallsyms", &size);
   sym_lexer.state = IN_ADDR;
   sym_lexer.last = 0;
   kernel_symbol_parse(ksymbols, &sym_lexer, buf, size);
-  fclose(fh);
+
+  free(buf);
+  return 0;
+}
+
+static int64_t load_kmod_info(Error **err)
+{
+  char *buf;
+  int64_t size = 0;
+  SymLexer sym_lexer;
+  kmodinfos = qdict_new();
+
+  slog("loading kernel modules info...");
+  buf = read_from_file("/proc/modules", &size);
+  sym_lexer.state = IN_NAME;
+  sym_lexer.last = 0;
+  kernel_info_parse(kmodinfos, &sym_lexer, buf, size);
+
   free(buf);
   return 0;
 }
@@ -630,4 +682,31 @@ int64_t qmp_get_ksymbol(const char *symbol, Error **err)
     load_kernel_symbols(err);
   }
   return qdict_get_try_int(ksymbols, symbol, -1);
+}
+
+int64_t qmp_kmod_addr(const char *modname, Error **err)
+{
+  QKmod *kmod;
+  if (!kmodinfos) {
+    /* Firstly kernel symbols must be loaded. */
+    load_kmod_info(err);
+  }
+  kmod = (QKmod *)qdict_get(kmodinfos, modname);
+  return kmod->addr;
+}
+
+int64_t qmp_kmod_size(const char *modname, Error **err)
+{
+  QKmod *kmod;
+  if (!kmodinfos) {
+    /* Firstly kernel symbols must be loaded. */
+    load_kmod_info(err);
+  }
+  kmod = (QKmod *)qdict_get(kmodinfos, modname);
+  return kmod->size;
+}
+
+int64_t qmp_word_size(Error **err)
+{
+  return sizeof(int);
 }

@@ -219,11 +219,46 @@
 ##
 # @get-ksymbol:
 #
-# Get kernel symbol of guest OS. 
+# Get kernel symbol of guest OS.
 #
 # Returns: address of specified kernel symbol.
 #
 ##
 { 'command': 'get-ksymbol',
   'data':    { 'symbol': 'str', },
+  'returns': 'int' }
+
+##
+# @kmod-addr:
+#
+# Get virtual address of kernel module
+#
+# Returns: virtual address of kernenl module's location.
+#
+##
+{ 'command': 'kmod-addr',
+  'data':    { 'symbol': 'str', },
+  'returns': 'int' }
+
+##
+# @kmod-size:
+#
+# Get size of kernel module
+#
+# Returns: size of kernel module.
+#
+##
+{ 'command': 'kmod-size',
+  'data':    { 'symbol': 'str', },
+  'returns': 'int' }
+
+##
+# @word-size:
+#
+# Get word size of guest os
+#
+# Returns: size of word in guest os.
+#
+##
+{ 'command': 'word-size',
   'returns': 'int' }
