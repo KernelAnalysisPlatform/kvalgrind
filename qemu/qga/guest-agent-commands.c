@@ -22,6 +22,7 @@
 #endif
 
 #include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include "qga/guest-agent-core.h"
@@ -598,6 +599,7 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
       }
       if (lexer->state == IN_SYM) {
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
+        symbol[i - lexer->last] = '\0'; //NULL terminated
         qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(addr)));
         //fprintf(stderr,"%s:\t0x%016llx\n",symbol, addr);
       }
@@ -623,6 +625,7 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
     if (buf[i] == ' ' || buf[i] == '\n') {
       if (lexer->state == IN_NAME) {
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
+        symbol[i - lexer->last] = '\0'; //NULL terminated
       }
       if (lexer->state == IN_SIZE) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
@@ -634,6 +637,7 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
         //fprintf(stderr,"%s\n",num);
         sscanf(num, "%016llx", &maddr);
         qdict_put_obj(info, symbol, QOBJECT(qkmod(maddr, msize)));
+        fprintf(stderr,"%s:\t0x%016llx,%d\n",symbol, maddr, msize);
       }
       lexer->state = (lexer->state + 1) % 6;
       lexer->last = i + 1;
