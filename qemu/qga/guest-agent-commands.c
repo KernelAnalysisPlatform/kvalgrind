@@ -594,20 +594,20 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
     if (lexer->state != IN_PROP && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t')) {
       if (lexer->state == IN_ADDR) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
-        //fprintf(stderr,"%s\n",num);
         sscanf(num, "%016llx", &addr);
       }
       if (lexer->state == IN_SYM) {
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
         qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(addr)));
-        //fprintf(stderr,"%s:\t0x%016llx\n",symbol, lexer->addr);
+        //fprintf(stderr,"%s:\t0x%016llx\n",symbol, addr);
       }
       lexer->state = (lexer->state + 1) % 4;
+      lexer->last = i + 1;
     }
     if (lexer->state == IN_PROP && buf[i] == '\n') {
       lexer->state = IN_ADDR;
+      lexer->last = i + 1;
     }
-    lexer->last = i + 1;
   }
 }
 
@@ -677,6 +677,7 @@ static int64_t load_kmod_info(Error **err)
 
 int64_t qmp_get_ksymbol(const char *symbol, Error **err)
 {
+  fprintf(stderr, "execute: get-ksymbol\n");
   if (!ksymbols) {
     /* Firstly kernel symbols must be loaded. */
     load_kernel_symbols(err);
@@ -686,6 +687,7 @@ int64_t qmp_get_ksymbol(const char *symbol, Error **err)
 
 int64_t qmp_kmod_addr(const char *modname, Error **err)
 {
+  fprintf(stderr, "execute: kmod-addr\n");
   QKmod *kmod;
   if (!kmodinfos) {
     /* Firstly kernel symbols must be loaded. */
@@ -697,6 +699,7 @@ int64_t qmp_kmod_addr(const char *modname, Error **err)
 
 int64_t qmp_kmod_size(const char *modname, Error **err)
 {
+  fprintf(stderr, "execute: kmod-size\n");
   QKmod *kmod;
   if (!kmodinfos) {
     /* Firstly kernel symbols must be loaded. */
@@ -708,5 +711,6 @@ int64_t qmp_kmod_size(const char *modname, Error **err)
 
 int64_t qmp_word_size(Error **err)
 {
+  fprintf(stderr, "execute: word-size\n");
   return sizeof(int);
 }
