@@ -631,14 +631,13 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
       if (lexer->state == IN_SIZE) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
         num[i - lexer->last] = '\0'; //NULL terminated
-        //fprintf(stderr,"%s\n",num);
         sscanf(num, "%d", &msize);
       }
       if (lexer->state == IN_KADDR) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
         num[i - lexer->last] = '\0'; //NULL terminated
         //fprintf(stderr,"%s\n",num);
-        sscanf(num, "%016llx", &maddr);
+        sscanf(num, "0x%016llx", &maddr);
         qdict_put_obj(info, symbol, QOBJECT(qkmod(maddr, msize)));
         fprintf(stderr,"%s:\t0x%016llx,%d\n",symbol, maddr, msize);
       }
