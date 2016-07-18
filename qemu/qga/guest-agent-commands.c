@@ -698,6 +698,7 @@ int64_t qmp_kmod_addr(const char *modname, Error **err)
     load_kmod_info(err);
   }
   kmod = (QKmod *)qdict_get(kmodinfos, modname);
+  if (!kmod) return NULL;
   return kmod->addr;
 }
 
@@ -710,6 +711,7 @@ int64_t qmp_kmod_size(const char *modname, Error **err)
     load_kmod_info(err);
   }
   kmod = (QKmod *)qdict_get(kmodinfos, modname);
+  if (!kmod) return NULL;  
   return kmod->size;
 }
 
