@@ -595,6 +595,7 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
     if (lexer->state != IN_PROP && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t')) {
       if (lexer->state == IN_ADDR) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
+        num[i - lexer->last] = '\0'; //NULL terminated
         sscanf(num, "%016llx", &addr);
       }
       if (lexer->state == IN_SYM) {
@@ -629,11 +630,13 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
       }
       if (lexer->state == IN_SIZE) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
+        num[i - lexer->last] = '\0'; //NULL terminated
         //fprintf(stderr,"%s\n",num);
-        sscanf(num, "%016llx", &msize);
+        sscanf(num, "%d", &msize);
       }
       if (lexer->state == IN_KADDR) {
         strncpy(num, buf + lexer->last, (i - lexer->last));
+        num[i - lexer->last] = '\0'; //NULL terminated
         //fprintf(stderr,"%s\n",num);
         sscanf(num, "%016llx", &maddr);
         qdict_put_obj(info, symbol, QOBJECT(qkmod(maddr, msize)));
@@ -711,7 +714,7 @@ int64_t qmp_kmod_size(const char *modname, Error **err)
     load_kmod_info(err);
   }
   kmod = (QKmod *)qdict_get(kmodinfos, modname);
-  if (!kmod) return NULL;  
+  if (!kmod) return NULL;
   return kmod->size;
 }
 
