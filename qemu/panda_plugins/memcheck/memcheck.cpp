@@ -248,18 +248,21 @@ int before_block_exec(CPUState *env, TranslationBlock *tb)
 static void init_vmi()
 {
   char enter;
-  if (connect_guest_agent()) {
+  //if (connect_guest_agent()) {
+    load_infos("/tmp/ksym.kval", "/tmp/kinfo.kval");
     alloc_guest_addr = get_ksymbol_addr(alloc_sym_name);
     free_guest_addr = get_ksymbol_addr(free_sym_name);
     kmod_addr = get_kmod_addr(kmod_name);
     kmod_size = get_kmod_size(kmod_name);
     word_size = get_word_size();
-    fprintf(stderr, "kmalloc:0x%016x, kfree:0x%016x, word:%d\n%s:0x%16x, %d\n",
+    fprintf(stderr, "kmalloc:0x%016llx, kfree:0x%016llx, word:%d\n%s:0x%16llx, %d\n",
             alloc_guest_addr, free_guest_addr, word_size, kmod_name, kmod_addr, kmod_size);
-  }
+  //}
 }
 
 //load_plugin ./qemu/x86_64-softmmu/panda_plugins/panda_memcheck.so
+//{"execute":"get-ksymbol", "arguments":{"symbol":"hoge"}}
+//{"execute":"kmod-addr", "arguments":{"symbol":"hoge"}}
 
 bool init_plugin(void *self)
 {
@@ -284,7 +287,7 @@ bool init_plugin(void *self)
   panda_arg_list *args = panda_get_args("memcheck");
   alloc_sym_name = g_strdup(panda_parse_string(args, "alloc", "__kmalloc"));
   free_sym_name  = g_strdup(panda_parse_string(args, "free", "kfree"));
-  kmod_name      = g_strdup(panda_parse_string(args, "module", ""));
+  kmod_name      = g_strdup(panda_parse_string(args, "module", "testmod"));
   /* Init VMI functions */
   init_vmi();
   return true;

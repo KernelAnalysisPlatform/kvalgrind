@@ -44,6 +44,13 @@ static inline int64_t get_word_size(void){
     assert(__get_word_size);
     return __get_word_size();
 }
+typedef void(*load_infos_t)(char *ksym, char *kinfo);
+static load_infos_t __load_infos = NULL;
+static inline void load_infos(char *ksym, char *kinfo);
+static inline void load_infos(char *ksym, char *kinfo){
+    assert(__load_infos);
+    return __load_infos(ksym,kinfo);
+}
 #define API_PLUGIN_NAME "in_vmi_linux"
 #define IMPORT_PPP(module, func_name) { \
  __##func_name = (func_name##_t) dlsym(module, #func_name); \
@@ -66,6 +73,7 @@ IMPORT_PPP(module, get_ksymbol_addr)
 IMPORT_PPP(module, get_kmod_addr)
 IMPORT_PPP(module, get_kmod_size)
 IMPORT_PPP(module, get_word_size)
+IMPORT_PPP(module, load_infos)
 return true;
 }
 

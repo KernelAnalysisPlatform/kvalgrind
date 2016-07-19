@@ -46,6 +46,7 @@ int64_t get_ksymbol_addr(const char *ksymbol);
 int64_t get_kmod_addr(const char *mod_name);
 int64_t get_kmod_size(const char *mod_name);
 int64_t get_word_size(void);
+void load_infos (char *ksym, char *kinfo);
 
 }
 
@@ -53,8 +54,9 @@ int64_t get_word_size(void);
 #include <set>
 #include <stack>
 #include <queue>
+#include <string>
 
-std::map<const char*, int64_t> ksyms,maddr,msize;
+std::map<std::string, int64_t> ksyms,maddr,msize;
 const char *socket_path;
 int agent_sock = -1;
 
@@ -79,19 +81,22 @@ int __connect_guest_agent(void)
 }
 
 
-void load_infos (char *ksym, char *kinfo)
+void __load_infos (char *ksym, char *kinfo)
 {
   FILE *sym_f,*info_f;
   char buf[100] = {0};
   int64_t addr,size;
+  fprintf(stderr, "loading local *.kvals\n");
   sym_f = fopen(ksym, "r");
   info_f = fopen(kinfo, "r");
   while (fscanf(sym_f, "%s 0x%16llx", buf, &addr) != EOF) {
-    char *sym = (char*)malloc(strlen(buf));
+    std::string sym = buf;
+    //fprintf(stderr, "%s 0x%16llx\n", sym.c_str(), addr);
     ksyms[sym] = addr;
   }
   while (fscanf(info_f, "%s 0x%16llx %d", buf, &addr, &size) != EOF) {
-    char *sym = (char*)malloc(strlen(buf));
+    std::string sym = buf;
+    //fprintf(stderr, "%s 0x%16llx %d\n", sym.c_str(), addr, size);
     maddr[sym] = addr;
     msize[sym] = size;
   }
@@ -137,7 +142,8 @@ int64_t __get_ksymbol_addr(const char *ksymbol)
   // free(ksym_qmp);
 
   //return addr;
-  return ksyms[ksymbol];
+  std::string ksymbol_s = ksymbol;
+  return ksyms[ksymbol_s];
 }
 
 int64_t __get_kmod_addr(const char *mod_name)
@@ -156,7 +162,8 @@ int64_t __get_kmod_addr(const char *mod_name)
   // free(ksym_qmp);
 
   //return addr;
-  return maddr[mod_name];
+  std::string mod_s = mod_name;
+  return maddr[mod_s];
 }
 
 
@@ -176,7 +183,8 @@ int64_t __get_kmod_size(const char *mod_name)
   // free(ksym_qmp);
 
   //return size;
-  return msize[mod_name];
+  std::string mod_s = mod_name;
+  return msize[mod_s];
 }
 
 int64_t __get_word_size(void)
@@ -200,23 +208,27 @@ int64_t __get_word_size(void)
 
 int connect_guest_agent(void)
 {
-  __connect_guest_agent();
+  return __connect_guest_agent();
+}
+void load_infos (char *ksym, char *kinfo)
+{
+  __load_infos(ksym, kinfo);
 }
 int64_t get_ksymbol_addr(const char *ksymbol)
 {
-  __get_ksymbol_addr(ksymbol);
+  return __get_ksymbol_addr(ksymbol);
 }
 int64_t get_kmod_addr(const char *mod_name)
 {
-  __get_kmod_addr(mod_name);
+  return __get_kmod_addr(mod_name);
 }
 int64_t get_kmod_size(const char *mod_name)
 {
-  __get_kmod_size(mod_name);
+  return __get_kmod_size(mod_name);
 }
 int64_t get_word_size(void)
 {
-  __get_word_size();
+  return __get_word_size();
 }
 // struct module *get_kmod(const char *mod_name)
 // {
@@ -253,7 +265,6 @@ bool init_plugin(void *self)
   /* Parse options */
   panda_arg_list *args = panda_get_args(PLUGIN_NAME);
   socket_path = g_strdup(panda_parse_string(args, "soc", DEFAULT_VMI_SOCKET));
-  load_infos("/tmp/ksym.kval", "/tmp/kinfo.kval");
   return true;
 }
 
