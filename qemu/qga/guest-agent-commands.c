@@ -590,7 +590,9 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
   char num[64] = {0};
   int64_t addr;
   int i;
+  FILE *ksym_f;
   fprintf(stderr,"symbol parse\n");
+  ksym_f = fopen("/tmp/ksym.kval", "w");
   for (i = 0; i < size; i++) {
     if (lexer->state != IN_PROP && (buf[i] == ' ' || buf[i] == '\n' || buf[i] == '\t')) {
       if (lexer->state == IN_ADDR) {
@@ -602,7 +604,7 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
         strncpy(symbol, buf + lexer->last, (i - lexer->last));
         symbol[i - lexer->last] = '\0'; //NULL terminated
         qdict_put_obj(maps, symbol, QOBJECT(qint_from_int(addr)));
-        //fprintf(stderr,"%s:\t0x%016llx\n",symbol, addr);
+        fprintf(ksym_f,"%s 0x%016llx\n",symbol, addr);
       }
       lexer->state = (lexer->state + 1) % 4;
       lexer->last = i + 1;
@@ -612,6 +614,7 @@ static void kernel_symbol_parse(QDict *maps, SymLexer *lexer, char *buf, int64_t
       lexer->last = i + 1;
     }
   }
+  fclose(ksym_f);
 }
 
 static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t size)
@@ -620,8 +623,9 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
   char num[64] = {0};
   int64_t maddr, msize;
   int i;
-
   fprintf(stderr,"kernel info parsing...\n");
+  FILE *kinfo_f;
+  kinfo_f = fopen("/tmp/kinfo.kval", "w");  
   for (i = 0; i < size; i++) {
     if (buf[i] == ' ' || buf[i] == '\n') {
       if (lexer->state == IN_NAME) {
@@ -639,12 +643,13 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
         //fprintf(stderr,"%s\n",num);
         sscanf(num, "0x%016llx", &maddr);
         qdict_put_obj(info, symbol, QOBJECT(qkmod(maddr, msize)));
-        fprintf(stderr,"%s:\t0x%016llx,%d\n",symbol, maddr, msize);
+        fprintf(kinfo_f,"%s 0x%016llx %d\n",symbol, maddr, msize);
       }
       lexer->state = (lexer->state + 1) % 6;
       lexer->last = i + 1;
     }
   }
+  fclose(kinfo_f);
 }
 
 static int64_t load_kernel_symbols(Error **err)

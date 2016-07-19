@@ -11,7 +11,9 @@
  *
  */
 
+#ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
+#endif
 
 extern "C" {
 
@@ -39,10 +41,11 @@ extern "C" {
 
 bool init_plugin(void *);
 void uninit_plugin(void *);
-int connect_guest_agent();
+int connect_guest_agent(void);
 int64_t get_ksymbol_addr(const char *ksymbol);
-struct module *get_kmod(const char *mod_name);
-bool sym_in_kmod(struct module *kmod, const char *symbol);
+int64_t get_kmod_addr(const char *mod_name);
+int64_t get_kmod_size(const char *mod_name);
+int64_t get_word_size(void);
 
 }
 
@@ -51,10 +54,11 @@ bool sym_in_kmod(struct module *kmod, const char *symbol);
 #include <stack>
 #include <queue>
 
+std::map<const char*, int64_t> ksyms,maddr,msize;
 const char *socket_path;
 int agent_sock = -1;
 
-int connect_guest_agent()
+int __connect_guest_agent(void)
 {
   struct sockaddr_un agent_addr;
   agent_addr.sun_family = PF_UNIX;
@@ -62,16 +66,35 @@ int connect_guest_agent()
 
   errno = 0;
   if((agent_sock = socket(PF_UNIX, SOCK_STREAM, 0)) == -1){
-    perror("in_vmi_linux: agent socket failure");
+    fprintf(stderr, "in_vmi_linux: agent socket failure\n");
     exit(EXIT_FAILURE);
   }
 
   if(connect(agent_sock, (struct sockaddr *)&agent_addr, sizeof(agent_addr)) == -1){
-    perror("in_vmi_linux: connection to agent failuer\nPlease launch agent in your guest os firstly");
+    fprintf(stderr, "in_vmi_linux: connection to agent failuer\nPlease launch agent in your guest os firstly\n");
     close(agent_sock);
     return EAGAIN;
   }
   return agent_sock;
+}
+
+
+void load_infos (char *ksym, char *kinfo)
+{
+  FILE *sym_f,*info_f;
+  char buf[100] = {0};
+  int64_t addr,size;
+  sym_f = fopen(ksym, "r");
+  info_f = fopen(kinfo, "r");
+  while (fscanf(sym_f, "%s 0x%16llx", buf, &addr) != EOF) {
+    char *sym = (char*)malloc(strlen(buf));
+    ksyms[sym] = addr;
+  }
+  while (fscanf(info_f, "%s 0x%16llx %d", buf, &addr, &size) != EOF) {
+    char *sym = (char*)malloc(strlen(buf));
+    maddr[sym] = addr;
+    msize[sym] = size;
+  }
 }
 
 void send_qmp(int sock, char *request, char *response, int resp_size)
@@ -81,13 +104,16 @@ void send_qmp(int sock, char *request, char *response, int resp_size)
     perror("send_qmp: connection to guest agent not exist.");
   }
   if ((write_num = write(sock, request, strlen(request))) != -1){
-    fprintf(stderr,"sended qmp:\t%s\n",request);
+    fprintf(stderr,"sended qmp(%d byte, %d len): %s\n",write_num, strlen(request), request);
     errno = 0;
-    if ((read_num = read(sock, response, resp_size)) != -1){
-      fprintf(stderr,"received qmp:\t%s\n",response);
-    } else{
-      perror("read failure");
-    }
+    /* TODO: When waiting QMP response, read function is blocked and guest os is freezed..
+     * So these operations must be multi-threaded.
+     */
+    // if ((read_num = read(sock, response, resp_size)) != -1){
+    //   fprintf(stderr,"received qmp:\t%s\n",response);
+    // } else{
+    //   perror("read failure");
+    // }
   } else{
     perror("write failure");
   }
@@ -95,77 +121,102 @@ void send_qmp(int sock, char *request, char *response, int resp_size)
 }
 
 /* TODO: Following functions are bit ugly and too duplicated. */
+int64_t __get_ksymbol_addr(const char *ksymbol)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t addr;
+
+  // ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE1(get-ksymbol)) + strlen(ksymbol) - 2 + 1);
+  // sprintf(ksym_qmp, QMP_TEMPLATE1(get-ksymbol), ksymbol);
+  //
+  // send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+  //
+  // sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
+  //
+  // free(ksym_qmp);
+
+  //return addr;
+  return ksyms[ksymbol];
+}
+
+int64_t __get_kmod_addr(const char *mod_name)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t addr;
+
+  // ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE1(kmod-addr)) + strlen(mod_name) - 2 + 1);
+  // sprintf(ksym_qmp, QMP_TEMPLATE1(kmod-addr), mod_name);
+  //
+  // send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+  //
+  // sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
+  //
+  // free(ksym_qmp);
+
+  //return addr;
+  return maddr[mod_name];
+}
+
+
+int64_t __get_kmod_size(const char *mod_name)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t size;
+
+  // ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE1(kmod-size)) + strlen(mod_name) - 2 + 1);
+  // sprintf(ksym_qmp, QMP_TEMPLATE1(kmod-size), mod_name);
+  //
+  // send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+  //
+  // sscanf(recv_qmp, QMP_RECV_TEMP, &size);
+  //
+  // free(ksym_qmp);
+
+  //return size;
+  return msize[mod_name];
+}
+
+int64_t __get_word_size(void)
+{
+  char *ksym_qmp;
+  char recv_qmp[QMP_RECV_SIZE];
+  int64_t size;
+
+  // ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(word-size)) + 1);
+  // sprintf(ksym_qmp, QMP_TEMPLATE(word-size));
+  //
+  // send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
+  //
+  // sscanf(recv_qmp, QMP_RECV_TEMP, &size);
+  //
+  // free(ksym_qmp);
+  //
+  // return size;
+  return 4;
+}
+
+int connect_guest_agent(void)
+{
+  __connect_guest_agent();
+}
 int64_t get_ksymbol_addr(const char *ksymbol)
 {
-  char *ksym_qmp;
-  char recv_qmp[QMP_RECV_SIZE];
-  int64_t addr;
-
-  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(get-ksymbol)) + strlen(ksymbol) - 2 + 1);
-  sprintf(ksym_qmp, QMP_TEMPLATE(get-ksymbol), ksymbol);
-
-  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
-
-  sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
-
-  free(ksym_qmp);
-
-  return addr;
+  __get_ksymbol_addr(ksymbol);
 }
-
 int64_t get_kmod_addr(const char *mod_name)
 {
-  char *ksym_qmp;
-  char recv_qmp[QMP_RECV_SIZE];
-  int64_t addr;
-
-  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(kmod-addr)) + strlen(mod_name) - 2 + 1);
-  sprintf(ksym_qmp, QMP_TEMPLATE(kmod-addr), mod_name);
-
-  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
-
-  sscanf(recv_qmp, QMP_RECV_TEMP, &addr);
-
-  free(ksym_qmp);
-
-  return addr;
+  __get_kmod_addr(mod_name);
 }
-
-
 int64_t get_kmod_size(const char *mod_name)
 {
-  char *ksym_qmp;
-  char recv_qmp[QMP_RECV_SIZE];
-  int64_t size;
-
-  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(kmod-size)) + strlen(mod_name) - 2 + 1);
-  sprintf(ksym_qmp, QMP_TEMPLATE(kmod-size), mod_name);
-
-  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
-
-  sscanf(recv_qmp, QMP_RECV_TEMP, &size);
-
-  free(ksym_qmp);
-
-  return size;
+  __get_kmod_size(mod_name);
 }
-
-int64_t get_word_size()
+int64_t get_word_size(void)
 {
-  char *ksym_qmp;
-  char recv_qmp[QMP_RECV_SIZE];
-  int64_t size;
-
-  ksym_qmp = (char *)malloc(strlen(QMP_TEMPLATE(word-size)) - 2 + 1);
-  sprintf(ksym_qmp, QMP_TEMPLATE(word-size));
-
-  send_qmp(agent_sock, ksym_qmp, recv_qmp, QMP_RECV_SIZE);
-
-  sscanf(recv_qmp, QMP_RECV_TEMP, &size);
-
-  free(ksym_qmp);
-
-  return size;
+  __get_word_size();
 }
 // struct module *get_kmod(const char *mod_name)
 // {
@@ -202,6 +253,7 @@ bool init_plugin(void *self)
   /* Parse options */
   panda_arg_list *args = panda_get_args(PLUGIN_NAME);
   socket_path = g_strdup(panda_parse_string(args, "soc", DEFAULT_VMI_SOCKET));
+  load_infos("/tmp/ksym.kval", "/tmp/kinfo.kval");
   return true;
 }
 

@@ -50,6 +50,7 @@ int before_block_exec(CPUState *env, TranslationBlock *tb);
 #include "memcheck.h"
 #include "../common/prog_point.h"
 #include "../callstack_instr/callstack_instr_ext.h"
+#include "../in_vmi_linux/in_vmi_linux_ext.h"
 
 static const char *alloc_sym_name, *free_sym_name, *kmod_name;
 int64_t alloc_guest_addr, free_guest_addr, kmod_addr, kmod_size;
@@ -247,15 +248,18 @@ int before_block_exec(CPUState *env, TranslationBlock *tb)
 static void init_vmi()
 {
   char enter;
-  scanf("Launch qemu-ga in guest OS and then, press the [enter]...%c\n", &enter);
   if (connect_guest_agent()) {
     alloc_guest_addr = get_ksymbol_addr(alloc_sym_name);
     free_guest_addr = get_ksymbol_addr(free_sym_name);
     kmod_addr = get_kmod_addr(kmod_name);
     kmod_size = get_kmod_size(kmod_name);
     word_size = get_word_size();
+    fprintf(stderr, "kmalloc:0x%016x, kfree:0x%016x, word:%d\n%s:0x%16x, %d\n",
+            alloc_guest_addr, free_guest_addr, word_size, kmod_name, kmod_addr, kmod_size);
   }
 }
+
+//load_plugin ./qemu/x86_64-softmmu/panda_plugins/panda_memcheck.so
 
 bool init_plugin(void *self)
 {
@@ -265,7 +269,7 @@ bool init_plugin(void *self)
   panda_require("callstack_instr");
   assert (init_callstack_instr_api());
   panda_require("in_vmi_linux");
-
+  assert(init_in_vmi_linux_api());
   PPP_REG_CB("callstack_instr", on_ret, process_ret);
   panda_enable_memcb();
   panda_cb pcb;
@@ -283,4 +287,10 @@ bool init_plugin(void *self)
   kmod_name      = g_strdup(panda_parse_string(args, "module", ""));
   /* Init VMI functions */
   init_vmi();
+  return true;
+}
+
+void uninit_plugin(void *self)
+{
+
 }
