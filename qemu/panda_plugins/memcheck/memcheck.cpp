@@ -53,17 +53,18 @@ int before_block_exec(CPUState *env, TranslationBlock *tb);
 #include "../in_vmi_linux/in_vmi_linux_ext.h"
 
 static const char *alloc_sym_name, *free_sym_name, *kmod_name;
-int64_t alloc_guest_addr, free_guest_addr, kmod_addr, kmod_size;
+uint64_t alloc_guest_addr, alloc_guest_addr2, free_guest_addr, kmod_addr, kmod_size;
 static unsigned word_size;
 static std::stack<alloc_info> alloc_stacks;
 static std::stack<free_info> free_stacks;
 static range_set alloc_now; // Allocated now.
 static merge_range_set alloc_ever; // Allocated ever.
 static std::map<target_ulong, target_ulong> valid_ptrs; //ptr -> valid(acllocated) address
-static std::map<target_ulong, int64_t> invalid_ptrs;    //ptr -> invalid(freed) address
+static std::map<target_ulong, uint64_t> invalid_ptrs;    //ptr -> invalid(freed) address
 static std::queue<target_ulong> invalid_queue;    //ptr -> invalid(freed) address
 static std::queue<read_info> bad_read_queue; //read operations from invalid(freed) address
 static const unsigned safety_window = 1000000;
+bool in_module = false, from_module = false;
 
 void taint_change(Addr a, uint64_t size)
 {
@@ -93,8 +94,6 @@ static bool inside_memop()
 
 void process_ret(CPUState *env, target_ulong func)
 {
-  if (!in_kernel_module(env->eip)) return;
-
   if (!alloc_stacks.empty() && env->eip == alloc_stacks.top().retaddr) {
       alloc_info info = alloc_stacks.top();
       target_ulong addr = env->regs[R_EAX];
@@ -102,6 +101,12 @@ void process_ret(CPUState *env, target_ulong func)
               alloc_now.insert(info.heap, addr, addr + info.size);
               alloc_ever.insert(info.heap, addr, addr + info.size);
           }
+          printf("PP %lu: return from alloc; addr {%lx}, size %lx\n", rr_get_guest_instr_count(), env->regs[R_EAX], info.size);
+          printf("    alloc_now: ");
+          alloc_now.dump();
+          printf("    alloc_ever: ");
+          alloc_ever.dump();
+          printf("\n");
       alloc_stacks.pop();
   } else if (!free_stacks.empty() && env->eip == free_stacks.top().retaddr) {
       free_info info = free_stacks.top();
@@ -124,6 +129,10 @@ void process_ret(CPUState *env, target_ulong func)
               }
               alloc_now.remove(info.addr);
           }
+          printf("PP %lu: return from free; addr {%lx}!\n", rr_get_guest_instr_count(), info.addr);
+          printf("    alloc_now: ");
+          alloc_now.dump();
+          printf("\n");
       }
       free_stacks.pop();
   }
@@ -132,7 +141,7 @@ void process_ret(CPUState *env, target_ulong func)
 static int virt_mem_access(CPUState *env, target_ulong pc, target_ulong addr,
                           target_ulong size, void *buf, int is_write)
 {
-  if (!in_kernel_module(pc)) return 0;
+  if (!in_module) return 0;
 
   if (!inside_memop()) {
        if (alloc_ever.contains(addr)
@@ -196,52 +205,69 @@ static target_ulong get_stack(CPUState *env, int offset_number)
     return get_word(env, env->regs[R_ESP] + word_size * offset_number);
 }
 
-int before_block_exec(CPUState *env, TranslationBlock *tb)
+void audit_alloc_free(CPUState *env, TranslationBlock *tb)
 {
-  if (!in_kernel_module(tb->pc)) return 0;
-
-  // Clear queue of potential bad reads.
-  while (bad_read_queue.size() > 0) {
-      read_info& ri = bad_read_queue.front();
-      if (get_word(env, ri.loc) == ri.val) { // Still invalid.
-          printf("READING INVALID POINTER %lx @ %lx!! PC %lx\n", ri.val, ri.loc, ri.pc);
-      }
-      bad_read_queue.pop();
-  }
-
-  // Clear queue of potential dangling pointers.
-  while (invalid_queue.size() > 0) {
-      target_ulong loc = invalid_queue.front();
-
-      if (invalid_ptrs.count(loc) == 0 || !alloc_now.contains(loc)) {
-          // Pointer has been overwritten or deallocated; not dangling.
-          invalid_queue.pop();
-          continue;
-      }
-      if (rr_get_guest_instr_count() - invalid_ptrs[loc] <= safety_window) {
-          // Inside safety window still.
-          break;
-      }
-
-      // Outside safety window and pointer is still dangling. Report.
-      printf("POINTER RETENTION to %lx @ %lx!\n", get_word(env, loc), loc);
-      invalid_queue.pop();
-  }
-  /* Now pc address is in the kernel module. */
-  if (tb->pc == alloc_guest_addr) {
+  if (tb->pc == alloc_guest_addr || tb->pc == alloc_guest_addr2) {
     alloc_info info;
     info.retaddr = get_stack(env, 0);
-    info.heap = get_stack(env, 1);
-    //info.size = get_stack(env, 3);
+    info.size = get_stack(env, 1);
     alloc_stacks.push(info);
+    printf("alloc found\n");
   }
   else if (tb->pc == free_guest_addr) {
     free_info info;
     info.retaddr = get_stack(env, 0);
-    info.heap = get_stack(env, 1);
-    info.addr = get_stack(env, 3);
+    info.addr = get_stack(env, 1);
     free_stacks.push(info);
+    printf("free found\n");
   }
+}
+
+int before_block_exec(CPUState *env, TranslationBlock *tb)
+{
+  if (in_kernel_module(tb->pc)) {
+    in_module = true;
+    // Clear queue of potential bad reads.
+    while (bad_read_queue.size() > 0) {
+        read_info& ri = bad_read_queue.front();
+        if (get_word(env, ri.loc) == ri.val) { // Still invalid.
+            printf("READING INVALID POINTER %lx @ %lx!! PC %lx\n", ri.val, ri.loc, ri.pc);
+        }
+        bad_read_queue.pop();
+    }
+
+    // Clear queue of potential dangling pointers.
+    while (invalid_queue.size() > 0) {
+        target_ulong loc = invalid_queue.front();
+
+        if (invalid_ptrs.count(loc) == 0 || !alloc_now.contains(loc)) {
+            // Pointer has been overwritten or deallocated; not dangling.
+            invalid_queue.pop();
+            continue;
+        }
+        if (rr_get_guest_instr_count() - invalid_ptrs[loc] <= safety_window) {
+            // Inside safety window still.
+            break;
+        }
+
+        // Outside safety window and pointer is still dangling. Report.
+        printf("POINTER RETENTION to %lx @ %lx!\n", get_word(env, loc), loc);
+        invalid_queue.pop();
+    }
+  }
+  else {
+    /* When in_module status is changed to false from true, it means that
+     * any out of module function is called. (ex. kmalloc, kfree)
+     */
+     if (in_module) {
+       /* If pc has reached once inside module area, in_module status must be true
+       */
+       printf("some function has called from module 0x%016llx, 0x%016llx\n", tb->pc, env->eip);
+       audit_alloc_free(env, tb);
+       in_module = false;
+     }
+  }
+  /* Now pc address is in the kernel module. */
   return 0;
 }
 
@@ -251,12 +277,13 @@ static void init_vmi()
   //if (connect_guest_agent()) {
     load_infos("/tmp/ksym.kval", "/tmp/kinfo.kval");
     alloc_guest_addr = get_ksymbol_addr(alloc_sym_name);
+    alloc_guest_addr2 = get_ksymbol_addr("kmem_cache_alloc_trace");
     free_guest_addr = get_ksymbol_addr(free_sym_name);
     kmod_addr = get_kmod_addr(kmod_name);
     kmod_size = get_kmod_size(kmod_name);
     word_size = get_word_size();
-    fprintf(stderr, "kmalloc:0x%016llx, kfree:0x%016llx, word:%d\n%s:0x%16llx, %d\n",
-            alloc_guest_addr, free_guest_addr, word_size, kmod_name, kmod_addr, kmod_size);
+    fprintf(stderr, "__kmalloc:0x%016llx, kmem_cache_alloc: 0x%16llx, kfree:0x%016llx, word:%d\n%s:0x%016llx, %d\n",
+            alloc_guest_addr, alloc_guest_addr2, free_guest_addr, word_size, kmod_name, kmod_addr, kmod_size);
   //}
 }
 
