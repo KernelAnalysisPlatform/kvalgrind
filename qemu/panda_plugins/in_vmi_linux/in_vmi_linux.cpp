@@ -203,7 +203,7 @@ int64_t __get_word_size(void)
   // free(ksym_qmp);
   //
   // return size;
-  return 4;
+  return 8;
 }
 
 int connect_guest_agent(void)

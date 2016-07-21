@@ -625,7 +625,7 @@ static void kernel_info_parse(QDict *info, SymLexer *lexer, char *buf, int64_t s
   int i;
   fprintf(stderr,"kernel info parsing...\n");
   FILE *kinfo_f;
-  kinfo_f = fopen("/tmp/kinfo.kval", "w");  
+  kinfo_f = fopen("/tmp/kinfo.kval", "w");
   for (i = 0; i < size; i++) {
     if (buf[i] == ' ' || buf[i] == '\n') {
       if (lexer->state == IN_NAME) {
@@ -725,5 +725,5 @@ int64_t qmp_kmod_size(const char *modname, Error **err)
 int64_t qmp_word_size(Error **err)
 {
   fprintf(stderr, "execute: word-size\n");
-  return sizeof(int);
+  return sizeof(unsigned long);
 }

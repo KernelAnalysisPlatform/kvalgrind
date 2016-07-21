@@ -110,7 +110,15 @@ void process_ret(CPUState *env, target_ulong func)
       alloc_stacks.pop();
   } else if (!free_stacks.empty() && env->eip == free_stacks.top().retaddr) {
       free_info info = free_stacks.top();
+      printf("freed: 0x%016llx\n", info.addr);
+      printf("    alloc_now: ");
+      alloc_now.dump();
+      printf("    alloc_ever: ");
+      alloc_ever.dump();
+      printf("\n");
+      printf("%s\n",(alloc_ever.contains(info.addr) ? "contain" : "no"));
       if (info.addr > 0 && alloc_ever.contains(info.addr)) {
+        printf("ever alloced memory\n");
           if (!alloc_now.contains(info.addr)) {
             /* The address that is once allocated then freed(alloc_now doesn't contain). */
               if (!inside_memop())
@@ -128,12 +136,13 @@ void process_ret(CPUState *env, target_ulong func)
                   valid_ptrs.erase(*it);
               }
               alloc_now.remove(info.addr);
+              printf("removed 0x%016lx\n", info.addr);
           }
-          printf("PP %lu: return from free; addr {%lx}!\n", rr_get_guest_instr_count(), info.addr);
-          printf("    alloc_now: ");
-          alloc_now.dump();
-          printf("\n");
       }
+      printf("PP %lu: return from free; addr {%lx}!\n", rr_get_guest_instr_count(), info.addr);
+      printf("    alloc_now: ");
+      alloc_now.dump();
+      printf("\n");
       free_stacks.pop();
   }
 }
@@ -144,6 +153,8 @@ static int virt_mem_access(CPUState *env, target_ulong pc, target_ulong addr,
   if (!in_module) return 0;
 
   if (!inside_memop()) {
+      printf("memaccess %s @ {%lx} PC %lx\n",
+                   is_write ? "WRITE" : "READ", addr, pc);
        if (alloc_ever.contains(addr)
                && !alloc_now.contains(addr)) {
            printf("USE AFTER FREE %s @ {%lx}! PC %lx\n",
@@ -210,16 +221,19 @@ void audit_alloc_free(CPUState *env, TranslationBlock *tb)
   if (tb->pc == alloc_guest_addr || tb->pc == alloc_guest_addr2) {
     alloc_info info;
     info.retaddr = get_stack(env, 0);
-    info.size = get_stack(env, 1);
+    //info.size = get_stack(env, 1);
+    //info.size = env->regs[R_EDI];
+    info.size = 100; //FIXME
     alloc_stacks.push(info);
-    printf("alloc found\n");
+    printf("alloc found size:%ul, retaddr:0x%016llx\n", info.size, info.retaddr);
   }
   else if (tb->pc == free_guest_addr) {
     free_info info;
     info.retaddr = get_stack(env, 0);
-    info.addr = get_stack(env, 1);
+    //info.addr = get_stack(env, 1);
+    info.addr = env->regs[R_EDI];
     free_stacks.push(info);
-    printf("free found\n");
+    printf("free found buff_addr:0x%016llx, retaddr:0x%016llx\n", info.addr, info.retaddr);
   }
 }
 
